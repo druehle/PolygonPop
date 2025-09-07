@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Polygon Pop TD</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0e0f12;
+      color: #e8eef7;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      touch-action: none; /* prevent inadvertent scroll/zoom during drag */
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+  <!-- Single-file HTML5 + JS tower defense for iPhone 13 mini and desktops -->
+  <!-- Drag the Pixel Tower from the bottom bar into the play area. -->
+  <!-- Creeps are polygons that split: hex -> 2x pent -> 2x square -> 2x tri. -->
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <script src="main.js" defer></script>
+</body>
+</html>

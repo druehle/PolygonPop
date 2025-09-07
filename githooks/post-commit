@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prevent infinite bump loop by skipping when the last commit already bumped version
+last_msg=$(git log -1 --pretty=%s || echo "")
+case "$last_msg" in
+  *"[skip-version]"* ) exit 0 ;;
+esac
+
+file="version.txt"
+if [ ! -f "$file" ]; then
+  echo "1" > "$file"
+  newv=1
+else
+  # Read only digits; default to 0 if empty
+  v=$(tr -dc '0-9' < "$file" || true)
+  if [ -z "$v" ]; then v=0; fi
+  newv=$((v + 1))
+  printf "%s" "$newv" > "$file"
+fi
+
+# Stage and commit the new version as a follow-up commit with a skip marker
+git add "$file" >/dev/null 2>&1 || true
+git commit -m "chore: bump version to $newv [skip-version]" >/dev/null 2>&1 || true
+
+exit 0
+
