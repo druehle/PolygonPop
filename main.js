@@ -25,6 +25,8 @@
   const UI_H = 140; // bottom UI palette height
   const CELL = 32;  // grid cell size; also tower/creep size
   const PATH_WIDTH = 32; // visual path width matching cell size
+  const GRID_COLS = 10;
+  const GRID_ROWS = 10;
 
   // Game state
   let W = 0, H = 0, PLAY_W = 0, PLAY_H = 0;
@@ -35,12 +37,12 @@
     towers: [],
     bullets: [],
     creeps: [],
-    money: 100,
+    money: 400,
     lives: 20,
     score: 0,
     wave: 1,
     spawnTimer: 0,
-    spawnEvery: 2.2, // seconds between hex spawns
+    spawnEvery: 4.4, // slower initial wave (half as many creeps)
     running: true
   };
 
@@ -73,6 +75,7 @@
   let pathCells = []; // array of {c,r}
   let pathSet = new Set();
   let buildableSet = new Set(); // set of "c,r" for cells around the path (not on it)
+  let mapX0 = 0, mapY0 = 0; // top-left of the 10x10 grid area
 
   function resize() {
     dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
@@ -93,39 +96,41 @@
   }
 
   function buildPath() {
-    // Build a boustrophedon (snaking) path along the 32px grid
-    cols = Math.max(4, Math.floor(PLAY_W / CELL));
-    rows = Math.max(4, Math.floor(PLAY_H / CELL));
+    // Fixed 10x10 grid centered in the play area
+    cols = GRID_COLS;
+    rows = GRID_ROWS;
+    const mapW = cols * CELL;
+    const mapH = rows * CELL;
+    mapX0 = Math.floor((PLAY_W - mapW) / 2);
+    mapY0 = Math.floor((PLAY_H - mapH) / 2);
 
     pathCells = [];
     pathSet = new Set();
     buildableSet = new Set();
 
     const startRow = 1;
-    const endRow = Math.max(startRow, rows - 2); // keep one-cell margin
+    const endRow = rows - 2; // one-cell margin at top/bottom
     let dir = 1; // 1: left->right, -1: right->left
 
     for (let r = startRow; r <= endRow; r++) {
       if (dir === 1) {
-        for (let c = 0; c < cols; c++) pathCells.push({ c, r });
+        for (let c = 1; c <= cols - 2; c++) pathCells.push({ c, r }); // margin at left/right
       } else {
-        for (let c = cols - 1; c >= 0; c--) pathCells.push({ c, r });
+        for (let c = cols - 2; c >= 1; c--) pathCells.push({ c, r });
       }
       dir *= -1;
     }
 
-    // Build waypoints at centers; extend off-screen at start/end
+    // Build waypoints at centers; extend slightly before/after map bounds
     waypoints = [];
     if (pathCells.length > 0) {
       const first = pathCells[0];
       const last = pathCells[pathCells.length - 1];
-      // Off-screen start
-      waypoints.push({ x: -CELL, y: first.r * CELL + CELL / 2 });
+      waypoints.push({ x: mapX0 - CELL, y: mapY0 + first.r * CELL + CELL / 2 });
       for (const cell of pathCells) {
-        waypoints.push({ x: cell.c * CELL + CELL / 2, y: cell.r * CELL + CELL / 2 });
+        waypoints.push({ x: mapX0 + cell.c * CELL + CELL / 2, y: mapY0 + cell.r * CELL + CELL / 2 });
       }
-      // Off-screen end
-      waypoints.push({ x: PLAY_W + CELL, y: last.r * CELL + CELL / 2 });
+      waypoints.push({ x: mapX0 + mapW + CELL, y: mapY0 + last.r * CELL + CELL / 2 });
     }
 
     // Build sets for collision/build checks
@@ -230,10 +235,10 @@
   }
 
   function snapToCell(x, y) {
-    const cx = Math.max(0, Math.min(cols - 1, Math.floor(x / CELL)));
-    const cy = Math.max(0, Math.min(rows - 1, Math.floor(y / CELL)));
-    const px = cx * CELL + CELL / 2;
-    const py = cy * CELL + CELL / 2;
+    const cx = Math.max(0, Math.min(cols - 1, Math.floor((x - mapX0) / CELL)));
+    const cy = Math.max(0, Math.min(rows - 1, Math.floor((y - mapY0) / CELL)));
+    const px = mapX0 + cx * CELL + CELL / 2;
+    const py = mapY0 + cy * CELL + CELL / 2;
     return { cx, cy, px, py };
   }
 
@@ -389,25 +394,25 @@
     ctx.fillStyle = '#0e0f12';
     ctx.fillRect(0, 0, W, H);
 
-    // Subtle grid in play area
+    // Subtle grid in map area
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, PLAY_W, PLAY_H);
+    ctx.rect(mapX0, mapY0, cols * CELL, rows * CELL);
     ctx.clip();
     const grid = CELL;
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
-    for (let x = 0; x <= PLAY_W; x += grid) {
-      ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, PLAY_H); ctx.stroke();
+    for (let x = mapX0; x <= mapX0 + cols * CELL; x += grid) {
+      ctx.beginPath(); ctx.moveTo(x + 0.5, mapY0); ctx.lineTo(x + 0.5, mapY0 + rows * CELL); ctx.stroke();
     }
-    for (let y = 0; y <= PLAY_H; y += grid) {
-      ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(PLAY_W, y + 0.5); ctx.stroke();
+    for (let y = mapY0; y <= mapY0 + rows * CELL; y += grid) {
+      ctx.beginPath(); ctx.moveTo(mapX0, y + 0.5); ctx.lineTo(mapX0 + cols * CELL, y + 0.5); ctx.stroke();
     }
     // Highlight buildable cells faintly
     ctx.fillStyle = 'rgba(100,200,255,0.06)';
     buildableSet.forEach(key => {
       const [c, r] = key.split(',').map(Number);
-      ctx.fillRect(c * CELL, r * CELL, CELL, CELL);
+      ctx.fillRect(mapX0 + c * CELL, mapY0 + r * CELL, CELL, CELL);
     });
     // Draw path ribbon under entities
     ctx.strokeStyle = 'rgba(100,200,255,0.25)';
