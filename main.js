@@ -23,7 +23,8 @@
 
   // Layout constants (CSS pixels)
   const UI_H = 140; // bottom UI palette height
-  const PATH_MARGIN = 24; // margin from playfield edges
+  const CELL = 32;  // grid cell size; also tower/creep size
+  const PATH_WIDTH = 32; // visual path width matching cell size
 
   // Game state
   let W = 0, H = 0, PLAY_W = 0, PLAY_H = 0;
@@ -66,8 +67,12 @@
   const pointer = { x: 0, y: 0, active: false };
   let dragging = null; // { type: 'tower', def: TOWER, ox, oy }
 
-  // Path as waypoints through the play area
+  // Path/grid data
   let waypoints = [];
+  let cols = 0, rows = 0;
+  let pathCells = []; // array of {c,r}
+  let pathSet = new Set();
+  let buildableSet = new Set(); // set of "c,r" for cells around the path (not on it)
 
   function resize() {
     dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
@@ -88,18 +93,55 @@
   }
 
   function buildPath() {
-    const yMid = Math.round(PLAY_H * 0.45);
-    const yA = Math.max(PATH_MARGIN, yMid - 80);
-    const yB = Math.min(PLAY_H - PATH_MARGIN, yMid + 80);
-    const x0 = -40;
-    const x1 = Math.round(PLAY_W * 0.18);
-    const x2 = Math.round(PLAY_W * 0.42);
-    const x3 = Math.round(PLAY_W * 0.66);
-    const x4 = Math.round(PLAY_W * 0.9);
-    const x5 = PLAY_W + 40;
-    waypoints = [
-      {x:x0, y:yA}, {x:x1, y:yB}, {x:x2, y:yA}, {x:x3, y:yB}, {x:x4, y:yA}, {x:x5, y:yB}
-    ];
+    // Build a boustrophedon (snaking) path along the 32px grid
+    cols = Math.max(4, Math.floor(PLAY_W / CELL));
+    rows = Math.max(4, Math.floor(PLAY_H / CELL));
+
+    pathCells = [];
+    pathSet = new Set();
+    buildableSet = new Set();
+
+    const startRow = 1;
+    const endRow = Math.max(startRow, rows - 2); // keep one-cell margin
+    let dir = 1; // 1: left->right, -1: right->left
+
+    for (let r = startRow; r <= endRow; r++) {
+      if (dir === 1) {
+        for (let c = 0; c < cols; c++) pathCells.push({ c, r });
+      } else {
+        for (let c = cols - 1; c >= 0; c--) pathCells.push({ c, r });
+      }
+      dir *= -1;
+    }
+
+    // Build waypoints at centers; extend off-screen at start/end
+    waypoints = [];
+    if (pathCells.length > 0) {
+      const first = pathCells[0];
+      const last = pathCells[pathCells.length - 1];
+      // Off-screen start
+      waypoints.push({ x: -CELL, y: first.r * CELL + CELL / 2 });
+      for (const cell of pathCells) {
+        waypoints.push({ x: cell.c * CELL + CELL / 2, y: cell.r * CELL + CELL / 2 });
+      }
+      // Off-screen end
+      waypoints.push({ x: PLAY_W + CELL, y: last.r * CELL + CELL / 2 });
+    }
+
+    // Build sets for collision/build checks
+    for (const { c, r } of pathCells) {
+      pathSet.add(`${c},${r}`);
+    }
+    const dirs = [ [1,0], [-1,0], [0,1], [0,-1] ];
+    for (const { c, r } of pathCells) {
+      for (const [dx, dy] of dirs) {
+        const nx = c + dx, ny = r + dy;
+        if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+          const key = `${nx},${ny}`;
+          if (!pathSet.has(key)) buildableSet.add(key);
+        }
+      }
+    }
   }
 
   // Geometry helpers
@@ -109,7 +151,7 @@
   function lerp(a, b, t) { return a + (b - a) * t; }
 
   // Creep factory
-  function creepRadiusForSides(s) { return 8 + s * 3; }
+  function creepRadiusForSides(s) { return CELL / 2; }
   function creepColorForSides(s) {
     switch (s) {
       case 6: return '#ff9f43';
@@ -187,6 +229,18 @@
     return y >= 0 && y <= PLAY_H && x >= 0 && x <= PLAY_W;
   }
 
+  function snapToCell(x, y) {
+    const cx = Math.max(0, Math.min(cols - 1, Math.floor(x / CELL)));
+    const cy = Math.max(0, Math.min(rows - 1, Math.floor(y / CELL)));
+    const px = cx * CELL + CELL / 2;
+    const py = cy * CELL + CELL / 2;
+    return { cx, cy, px, py };
+  }
+
+  function isBuildableCell(cx, cy) {
+    return buildableSet.has(`${cx},${cy}`);
+  }
+
   function paletteRects() {
     const pad = 12;
     const h = UI_H - safeBottom;
@@ -216,8 +270,15 @@
   function handlePointerUp(x, y) {
     if (dragging && dragging.type === 'tower') {
       if (inPlayArea(x, y) && game.money >= dragging.def.cost) {
-        game.towers.push(makeTower(dragging.def, x, y));
-        game.money -= dragging.def.cost;
+        const { cx, cy, px, py } = snapToCell(x, y);
+        // Only allow on buildable cells and not overlapping existing tower cells
+        const occupied = game.towers.some(t => t.cellX === cx && t.cellY === cy);
+        if (isBuildableCell(cx, cy) && !occupied) {
+          const tw = makeTower(dragging.def, px, py);
+          tw.cellX = cx; tw.cellY = cy;
+          game.towers.push(tw);
+          game.money -= dragging.def.cost;
+        }
       }
     }
     dragging = null;
@@ -333,7 +394,7 @@
     ctx.beginPath();
     ctx.rect(0, 0, PLAY_W, PLAY_H);
     ctx.clip();
-    const grid = 24;
+    const grid = CELL;
     ctx.strokeStyle = 'rgba(255,255,255,0.05)';
     ctx.lineWidth = 1;
     for (let x = 0; x <= PLAY_W; x += grid) {
@@ -342,17 +403,22 @@
     for (let y = 0; y <= PLAY_H; y += grid) {
       ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(PLAY_W, y + 0.5); ctx.stroke();
     }
-    ctx.restore();
-
-    // Path ribbon
+    // Highlight buildable cells faintly
+    ctx.fillStyle = 'rgba(100,200,255,0.06)';
+    buildableSet.forEach(key => {
+      const [c, r] = key.split(',').map(Number);
+      ctx.fillRect(c * CELL, r * CELL, CELL, CELL);
+    });
+    // Draw path ribbon under entities
     ctx.strokeStyle = 'rgba(100,200,255,0.25)';
-    ctx.lineWidth = 10; ctx.lineCap = 'round';
+    ctx.lineWidth = PATH_WIDTH; ctx.lineCap = 'round';
     ctx.beginPath();
     for (let i = 0; i < waypoints.length; i++) {
       const p = waypoints[i];
       if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
     }
     ctx.stroke();
+    ctx.restore();
   }
 
   function drawCreep(c) {
@@ -382,7 +448,7 @@
   }
 
   function drawTower(t) {
-    const sz = 16;
+    const sz = CELL;
     ctx.strokeStyle = 'rgba(108,240,255,0.15)';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(t.x, t.y, t.def.range, 0, Math.PI * 2); ctx.stroke();
@@ -456,13 +522,16 @@
 
     // Drag ghost
     if (dragging && dragging.type === 'tower') {
-      const x = pointer.x, y = pointer.y;
       const def = dragging.def;
-      ctx.strokeStyle = 'rgba(108,240,255,0.2)';
+      const { cx, cy, px, py } = snapToCell(pointer.x, pointer.y);
+      const ok = isBuildableCell(cx, cy) && !game.towers.some(t => t.cellX === cx && t.cellY === cy);
+      // Range ring
+      ctx.strokeStyle = ok ? 'rgba(108,240,255,0.35)' : 'rgba(255,120,120,0.35)';
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(x, y, def.range, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = 'rgba(108,240,255,0.35)';
-      ctx.fillRect(x - 8, y - 8, 16, 16);
+      ctx.beginPath(); ctx.arc(px, py, def.range, 0, Math.PI * 2); ctx.stroke();
+      // Body snapped to grid
+      ctx.fillStyle = ok ? 'rgba(108,240,255,0.35)' : 'rgba(255,120,120,0.35)';
+      ctx.fillRect(px - CELL/2, py - CELL/2, CELL, CELL);
     }
 
     // Game over overlay
@@ -511,4 +580,3 @@
   resize();
   requestAnimationFrame(tick);
 })();
-
